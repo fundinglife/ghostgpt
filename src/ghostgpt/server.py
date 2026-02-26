@@ -29,7 +29,9 @@ from .schemas import (
 # ── Server state (set by configure()) before uvicorn starts ──────────
 
 _browser_manager: Optional[BrowserManager] = None
-_context = None  # BrowserContext — shared across all requests
+_context = None  # BrowserContext — launched once at startup
+_visible = False  # Whether browser window is visible
+_request_sem = asyncio.Semaphore(1)  # ChatGPT only generates one response at a time
 
 # conversation_id -> (ChatGPTDriver, last_used_timestamp)
 _conversations: dict[str, tuple[ChatGPTDriver, float]] = {}
@@ -39,16 +41,16 @@ IDLE_TIMEOUT = 1800  # 30 min — close idle conversation tabs
 
 def configure(visible: bool = False):
     """Set up the browser manager (called before server starts)."""
-    global _browser_manager
+    global _browser_manager, _visible
+    _visible = visible
     _browser_manager = BrowserManager(headless=False, visible=visible)
 
 
-async def _ensure_context():
-    """Launch the browser if not already running."""
+async def _startup():
+    """Launch the browser once at server startup."""
     global _context
-    if _context is None:
-        _context = await _browser_manager.start()
-    return _context
+    _context = await _browser_manager.start()
+    logger.info("Browser launched and ready")
 
 
 async def _cleanup_idle():
@@ -131,8 +133,7 @@ async def chat_completions(request: Request) -> JSONResponse:
         logger.info(f"Reusing conversation: {conv_id}")
     else:
         # New tab for this request
-        ctx = await _ensure_context()
-        driver = ChatGPTDriver(ctx)
+        driver = ChatGPTDriver(_context, visible=_visible)
         if conv_id:
             # Client wants a new conversation with this ID
             _conversations[conv_id] = (driver, time.time())
@@ -142,18 +143,22 @@ async def chat_completions(request: Request) -> JSONResponse:
             conv_id = f"conv-{uuid4().hex[:12]}"
 
     try:
-        if req.stream:
-            return await _handle_streaming(
-                driver, prompt, gpt_id, continue_conv,
-                completion_id, created, req.model, conv_id,
-                close_tab=(req.conversation_id is None),
-            )
-        else:
-            return await _handle_non_streaming(
-                driver, prompt, gpt_id, continue_conv,
-                completion_id, created, req.model, conv_id,
-                close_tab=(req.conversation_id is None),
-            )
+        # ChatGPT only generates one response at a time per account,
+        # so we serialize requests with a semaphore
+        async with _request_sem:
+            logger.info(f"Processing request: {prompt[:50]}...")
+            if req.stream:
+                return await _handle_streaming(
+                    driver, prompt, gpt_id, continue_conv,
+                    completion_id, created, req.model, conv_id,
+                    close_tab=(req.conversation_id is None),
+                )
+            else:
+                return await _handle_non_streaming(
+                    driver, prompt, gpt_id, continue_conv,
+                    completion_id, created, req.model, conv_id,
+                    close_tab=(req.conversation_id is None),
+                )
     except Exception as e:
         logger.error(f"Request error: {e}")
         return _error_response(str(e), 500)
@@ -259,4 +264,5 @@ app = Starlette(
         Route("/v1/models", list_models, methods=["GET"]),
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
     ],
+    on_startup=[_startup],
 )

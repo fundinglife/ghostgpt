@@ -22,8 +22,9 @@ MAX_RESPONSE_WAIT = 300  # seconds (5 min for thinking models)
 
 
 class ChatGPTDriver:
-    def __init__(self, context: BrowserContext):
+    def __init__(self, context: BrowserContext, visible: bool = False):
         self.context = context
+        self.visible = visible
         self.page: Optional[Page] = None
         self._in_conversation = False
         self._msg_count = 0
@@ -227,12 +228,31 @@ class ChatGPTDriver:
                 continue
         return 0
 
+    async def _auto_allow_actions(self):
+        """Click 'Allow' buttons for GPT actions that need permission."""
+        allow_selectors = [
+            'button:has-text("Allow")',
+            'button:has-text("Always allow")',
+            '[data-testid="allow-action-button"]',
+        ]
+        for sel in allow_selectors:
+            try:
+                btn = await self.page.query_selector(sel)
+                if btn and await btn.is_visible():
+                    logger.info(f"Auto-clicking action permission: {sel}")
+                    await btn.click()
+                    await asyncio.sleep(1)
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def _wait_for_response(self, prev_count: int):
         """Wait for a NEW assistant message to finish generating."""
         logger.info(f"Waiting for new response (prev messages: {prev_count})...")
 
         # Phase 1: wait for a new assistant message to appear
-        for i in range(60):  # up to 30s for response to start
+        for i in range(120):  # up to 60s for response to start
             await asyncio.sleep(0.5)
             current = await self._count_messages()
             if current > prev_count:
@@ -243,14 +263,20 @@ class ChatGPTDriver:
             return
 
         # Phase 2: wait for the LAST message to have completion indicators
+        # Key: only check completion if message count is still > prev_count
+        # (transient DOM elements from GPT actions can appear and disappear)
         for i in range(MAX_RESPONSE_WAIT * 2):  # poll every 0.5s
             await asyncio.sleep(0.5)
 
-            # Get the last assistant message and check for completion buttons inside it
             try:
                 for s in ASSISTANT_FALLBACKS:
                     msgs = await self.page.query_selector_all(s)
                     if msgs:
+                        # Guard: ensure we still have MORE messages than before
+                        if len(msgs) <= prev_count:
+                            logger.debug(f"Message count dropped to {len(msgs)}, waiting...")
+                            break  # break inner for, continue outer poll loop
+
                         last_msg = msgs[-1]
                         # Check for completion buttons within this specific message's parent
                         parent = await last_msg.evaluate_handle("el => el.closest('article') || el.parentElement")
@@ -281,7 +307,12 @@ class ChatGPTDriver:
         prev_count = await self._count_messages()
 
         await self.page.click(prompt_selector)
-        await self.page.keyboard.type(prompt)
+        if self.visible:
+            await self.page.keyboard.type(prompt)
+        else:
+            # Clipboard paste works reliably when browser is hidden
+            await self.page.evaluate("(text) => navigator.clipboard.writeText(text)", prompt)
+            await self.page.keyboard.press("Control+KeyV")
         await asyncio.sleep(0.3)
 
         send_selector = await self._find_visible(SEND_BUTTON_FALLBACKS)
@@ -310,7 +341,7 @@ class ChatGPTDriver:
         prev_count = await self._send_and_get_prev_count(prompt, gpt_id, continue_conversation)
 
         # Phase 1: wait for new assistant message to appear
-        for i in range(60):
+        for i in range(120):  # up to 60s
             await asyncio.sleep(0.5)
             current = await self._count_messages()
             if current > prev_count:
@@ -332,6 +363,10 @@ class ChatGPTDriver:
                 for s in ASSISTANT_FALLBACKS:
                     msgs = await self.page.query_selector_all(s)
                     if msgs:
+                        # Guard: ensure message count is still > prev_count
+                        if len(msgs) <= prev_count:
+                            break  # transient element gone, keep waiting
+
                         last_msg = msgs[-1]
                         current_text = (await last_msg.inner_text() or "").strip()
 

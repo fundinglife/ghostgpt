@@ -198,12 +198,13 @@ ghostgpt default <nickname>       # Set default GPT
 
 ## How It Works
 
-1. **BrowserManager** launches Chromium with a persistent profile at `~/.ghostgpt/profile/`
+1. **BrowserManager** launches Chromium once at server startup with a persistent profile at `~/.ghostgpt/profile/`
 2. **Win32 API** hides the browser window (`ShowWindow(SW_HIDE)` + `WS_EX_TOOLWINDOW`)
-3. **ChatGPTDriver** navigates to ChatGPT, types prompts, clicks send
-4. **DOM polling** detects response completion via Copy/Read aloud buttons on the last `<article>`
-5. **Streaming** polls `inner_text()` every 0.3s and yields text deltas as SSE chunks
-6. **Selectors** are centralized in `selectors.py` with fallback arrays for resilience
+3. **ChatGPTDriver** navigates to ChatGPT, inputs prompts (clipboard paste when hidden, keyboard when visible), clicks send
+4. **Request serialization** — ChatGPT only generates one response at a time, so requests are queued via `asyncio.Semaphore(1)`
+5. **DOM polling** detects response completion via Copy/Read aloud buttons on the last `<article>`, with a message count guard against transient DOM elements
+6. **Streaming** polls `inner_text()` every 0.3s and yields text deltas as SSE chunks
+7. **Selectors** are centralized in `selectors.py` with fallback arrays for resilience
 
 ## License
 

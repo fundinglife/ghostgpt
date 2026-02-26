@@ -45,8 +45,11 @@ Modules in `src/ghostgpt/` using a src-layout:
 
 - **Fully async**: All browser interaction uses async/await. CLI bridges with `asyncio.run()`.
 - **Fallback selectors**: Each DOM element has a fallback list (e.g., `PROMPT_FALLBACKS`). The driver tries each in order.
-- **DOM completion detection**: Counts assistant messages before/after sending. Waits for completion indicators (Copy/Read aloud buttons) on the last message's parent `<article>`.
+- **DOM completion detection**: Counts assistant messages before/after sending. Waits for completion indicators (Copy/Read aloud buttons) on the last message's parent `<article>`. Includes a message count guard — if count drops back (transient DOM elements from GPT actions), keeps waiting instead of false-detecting on an old message.
 - **Streaming via DOM polling**: `send_prompt_streaming()` polls `inner_text()` every 0.3s, yields text deltas.
+- **Request serialization**: `asyncio.Semaphore(1)` in server.py — ChatGPT only generates one response at a time per account.
+- **Browser at startup**: Browser launches once via Starlette `on_startup` event, not lazily per-request.
+- **Input method switching**: `keyboard.type()` when browser is visible; clipboard paste (`navigator.clipboard.writeText` + Ctrl+V) when hidden. Clipboard paste is more reliable for hidden browsers.
 - **One tab per request**: API server opens a new tab for each request. Tabs with `conversation_id` stay open for follow-ups; others close after response.
 - **Win32 window hiding**: `ShowWindow(SW_HIDE)` + `WS_EX_TOOLWINDOW` to hide browser from user, taskbar, and Alt+Tab.
 - **Persistent profiles**: Browser sessions persist via patchright's `user_data_dir`.
