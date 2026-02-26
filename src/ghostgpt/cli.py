@@ -283,5 +283,29 @@ def set_default(
     print(f"Default GPT set to: {nickname} ({gpts[nickname]})")
 
 
+@app.command()
+def serve(
+    port: int = typer.Option(5124, "--port", "-p", help="Port to listen on"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to"),
+    visible: bool = typer.Option(False, "--visible", help="Show the browser window"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug logs"),
+):
+    """
+    Start an OpenAI-compatible API server.
+    Use with any OpenAI client library or curl.
+    """
+    if verbose:
+        logger.add(sys.stderr, level="INFO")
+
+    from .server import app as server_app, configure
+    import uvicorn
+
+    configure(visible=visible)
+    print(f"\n  GhostGPT API server starting on http://{host}:{port}")
+    print(f"  OpenAI endpoint: http://{host}:{port}/v1/chat/completions")
+    print(f"  Health check:    http://{host}:{port}/health\n")
+    uvicorn.run(server_app, host=host, port=port, log_level="info" if verbose else "warning")
+
+
 if __name__ == "__main__":
     app()

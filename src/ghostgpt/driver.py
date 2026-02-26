@@ -267,27 +267,23 @@ class ChatGPTDriver:
 
         logger.warning(f"Response wait timed out after {MAX_RESPONSE_WAIT}s")
 
-    async def send_prompt(self, prompt: str, gpt_id: Optional[str] = None, continue_conversation: bool = False) -> str:
-        """Sends a prompt and returns the assistant's response."""
+    async def _send_and_get_prev_count(self, prompt: str, gpt_id: Optional[str] = None, continue_conversation: bool = False) -> int:
+        """Shared logic: navigate, type prompt, click send. Returns prev message count."""
         if not (continue_conversation and self._in_conversation):
             await self._ensure_page(gpt_id)
 
-        # Find the prompt input
         prompt_selector = await self._find_visible(PROMPT_FALLBACKS)
         if not prompt_selector:
             raise Exception("Prompt box not visible.")
 
         logger.info(f"Typing prompt via {prompt_selector}: {prompt[:50]}...")
 
-        # Count existing messages before sending
         prev_count = await self._count_messages()
 
-        # Type the prompt
         await self.page.click(prompt_selector)
         await self.page.keyboard.type(prompt)
         await asyncio.sleep(0.3)
 
-        # Click send
         send_selector = await self._find_visible(SEND_BUTTON_FALLBACKS)
         if send_selector:
             logger.info(f"Clicking send button: {send_selector}")
@@ -296,13 +292,78 @@ class ChatGPTDriver:
             logger.warning("Send button not found after typing, pressing Enter.")
             await self.page.press(prompt_selector, "Enter")
 
-        # Wait for response to complete via DOM indicators
+        return prev_count
+
+    async def send_prompt(self, prompt: str, gpt_id: Optional[str] = None, continue_conversation: bool = False) -> str:
+        """Sends a prompt and returns the assistant's response."""
+        prev_count = await self._send_and_get_prev_count(prompt, gpt_id, continue_conversation)
+
         await self._wait_for_response(prev_count)
 
         self._in_conversation = True
         self._msg_count += 1
 
         return await self._extract_response()
+
+    async def send_prompt_streaming(self, prompt: str, gpt_id: Optional[str] = None, continue_conversation: bool = False):
+        """Async generator that yields text deltas as the response generates."""
+        prev_count = await self._send_and_get_prev_count(prompt, gpt_id, continue_conversation)
+
+        # Phase 1: wait for new assistant message to appear
+        for i in range(60):
+            await asyncio.sleep(0.5)
+            current = await self._count_messages()
+            if current > prev_count:
+                logger.info(f"New message appeared ({(i+1)*0.5:.0f}s)")
+                break
+        else:
+            logger.warning("No new assistant message appeared")
+            return
+
+        # Phase 2: poll DOM for growing text, yield deltas
+        prev_text = ""
+        for i in range(MAX_RESPONSE_WAIT * 3):  # poll every ~0.3s
+            await asyncio.sleep(0.3)
+
+            try:
+                # Get current text of last assistant message
+                current_text = ""
+                completed = False
+                for s in ASSISTANT_FALLBACKS:
+                    msgs = await self.page.query_selector_all(s)
+                    if msgs:
+                        last_msg = msgs[-1]
+                        current_text = (await last_msg.inner_text() or "").strip()
+
+                        # Check completion
+                        parent = await last_msg.evaluate_handle(
+                            "el => el.closest('article') || el.parentElement"
+                        )
+                        for indicator in COMPLETION_INDICATORS:
+                            btn = await parent.query_selector(indicator.replace("article ", ""))
+                            if btn:
+                                completed = True
+                                break
+                        break
+
+                # Yield delta if text grew
+                if len(current_text) > len(prev_text):
+                    delta = current_text[len(prev_text):]
+                    prev_text = current_text
+                    yield delta
+
+                if completed:
+                    # Yield any final text
+                    if len(current_text) > len(prev_text):
+                        yield current_text[len(prev_text):]
+                    logger.info(f"Stream complete ({(i+1)*0.3:.0f}s)")
+                    break
+            except Exception as e:
+                logger.debug(f"Stream poll error: {e}")
+                continue
+
+        self._in_conversation = True
+        self._msg_count += 1
 
     async def _download_image(self, url: str, index: int) -> Optional[Path]:
         """Download an image from URL using the browser context and save to disk."""
