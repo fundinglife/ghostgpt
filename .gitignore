@@ -19,3 +19,13 @@ output.txt
 # IDE
 .vscode/
 .idea/
+
+# Claude Code
+.claude/
+
+# Secrets / tokens
+token.json
+tests_http/token.json
+
+# Windows artifacts
+nul
