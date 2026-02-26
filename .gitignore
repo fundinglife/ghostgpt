@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Debug artifacts
+debug_screenshot.png
+debug_visible.png
+output.txt
+
+# Browser profile (contains session cookies)
+.ghostgpt/
+
+# IDE
+.vscode/
+.idea/
