@@ -71,7 +71,7 @@ class ChatCompletionChunk(BaseModel):
 class ModelObject(BaseModel):
     id: str
     object: str = "model"
-    owned_by: str = "ghostgpt"
+    owned_by: str = "customgpts"
 
 
 class ModelListResponse(BaseModel):

@@ -8,7 +8,7 @@ if sys.platform == "win32":
     import ctypes
     import ctypes.wintypes
 
-DEFAULT_PROFILE_DIR = Path.home() / ".ghostgpt" / "profile"
+DEFAULT_PROFILE_DIR = Path.home() / ".customgpts" / "profile"
 
 
 def _get_chrome_window_handles() -> set:

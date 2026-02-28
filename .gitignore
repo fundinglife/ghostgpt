@@ -14,7 +14,7 @@ debug_visible.png
 output.txt
 
 # Browser profile (contains session cookies)
-.ghostgpt/
+.customgpts/
 
 # IDE
 .vscode/

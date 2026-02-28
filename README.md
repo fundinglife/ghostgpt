@@ -1,4 +1,4 @@
-# GhostGPT
+# CustomGPTs
 
 A stealth ChatGPT web scraper that doubles as an **OpenAI-compatible API server**. Uses patchright (stealth Playwright fork) with persistent Chromium profiles to bypass anti-bot detection. Log in once, then use via CLI, Python API, or any OpenAI client.
 
@@ -25,7 +25,7 @@ patchright install chromium
 ### 1. Login (one time)
 
 ```bash
-ghostgpt login
+customgpts login
 ```
 
 A browser window opens. Log in to ChatGPT, then close the window.
@@ -33,28 +33,28 @@ A browser window opens. Log in to ChatGPT, then close the window.
 ### 2. Ask a question
 
 ```bash
-ghostgpt ask "What is the capital of France?"
+customgpts ask "What is the capital of France?"
 ```
 
 ### 3. Interactive chat
 
 ```bash
-ghostgpt chat
+customgpts chat
 ```
 
 ### 4. Use a custom GPT
 
 ```bash
 # By raw ID
-ghostgpt ask "Analyze this" --gpt g-XXXXX
+customgpts ask "Analyze this" --gpt g-XXXXX
 
 # Or star it with a nickname first
-ghostgpt star g-XXXXX teacher
-ghostgpt ask "Explain calculus" --gpt teacher
+customgpts star g-XXXXX teacher
+customgpts ask "Explain calculus" --gpt teacher
 
 # Set a default GPT
-ghostgpt default teacher
-ghostgpt ask "Explain calculus"  # uses teacher automatically
+customgpts default teacher
+customgpts ask "Explain calculus"  # uses teacher automatically
 ```
 
 ## API Server
@@ -62,7 +62,7 @@ ghostgpt ask "Explain calculus"  # uses teacher automatically
 Start an OpenAI-compatible server:
 
 ```bash
-ghostgpt serve
+customgpts serve
 ```
 
 Server runs on `http://localhost:5124` with a hidden browser.
@@ -138,10 +138,10 @@ print(response.choices[0].message.content)
 
 ### Use a custom GPT as a model
 
-The `model` field maps to GPT nicknames from `ghostgpt star`:
+The `model` field maps to GPT nicknames from `customgpts star`:
 
 ```bash
-ghostgpt star g-XXXXX teacher
+customgpts star g-XXXXX teacher
 curl -X POST http://localhost:5124/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "teacher", "messages": [{"role": "user", "content": "Explain gravity"}]}'
@@ -151,10 +151,10 @@ curl -X POST http://localhost:5124/v1/chat/completions \
 
 ```python
 import asyncio
-from ghostgpt import GhostGPT
+from customgpts import CustomGPTs
 
 async def main():
-    async with GhostGPT() as client:
+    async with CustomGPTs() as client:
         # Single question
         answer = await client.ask("Hello!")
         print(answer)
@@ -175,15 +175,15 @@ asyncio.run(main())
 ## All CLI Commands
 
 ```
-ghostgpt login                    # Open browser for manual login
-ghostgpt ask "prompt"             # Send prompt, print response
-ghostgpt chat                     # Interactive chat session
-ghostgpt serve                    # Start OpenAI-compatible API server
-ghostgpt gpts                     # List available GPTs from your account
-ghostgpt search "query"           # Search the GPT Store
-ghostgpt star <id> <nickname>     # Save a GPT with a nickname
-ghostgpt unstar <nickname>        # Remove a saved nickname
-ghostgpt default <nickname>       # Set default GPT
+customgpts login                    # Open browser for manual login
+customgpts ask "prompt"             # Send prompt, print response
+customgpts chat                     # Interactive chat session
+customgpts serve                    # Start OpenAI-compatible API server
+customgpts gpts                     # List available GPTs from your account
+customgpts search "query"           # Search the GPT Store
+customgpts star <id> <nickname>     # Save a GPT with a nickname
+customgpts unstar <nickname>        # Remove a saved nickname
+customgpts default <nickname>       # Set default GPT
 ```
 
 ### Common flags
@@ -198,7 +198,7 @@ ghostgpt default <nickname>       # Set default GPT
 
 ## How It Works
 
-1. **BrowserManager** launches Chromium once at server startup with a persistent profile at `~/.ghostgpt/profile/`
+1. **BrowserManager** launches Chromium once at server startup with a persistent profile at `~/.customgpts/profile/`
 2. **Win32 API** hides the browser window (`ShowWindow(SW_HIDE)` + `WS_EX_TOOLWINDOW`)
 3. **ChatGPTDriver** navigates to ChatGPT, inputs prompts (clipboard paste when hidden, keyboard when visible), clicks send
 4. **Request serialization** — ChatGPT only generates one response at a time, so requests are queued via `asyncio.Semaphore(1)`

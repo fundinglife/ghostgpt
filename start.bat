@@ -1,4 +1,4 @@
 @echo off
-cd /d C:\_projects_\ghostgpt
-ghostgpt serve --verbose
+cd /d C:\_projects_\customgpts
+customgpts serve --verbose
 pause

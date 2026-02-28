@@ -4,7 +4,7 @@ from .browser import BrowserManager
 from .driver import ChatGPTDriver
 from loguru import logger
 
-class GhostGPT:
+class CustomGPTs:
     def __init__(self, profile_dir: Optional[Path] = None, headless: bool = False, visible: bool = False):
         self.browser_manager = BrowserManager(profile_dir=profile_dir, headless=headless, visible=visible)
         self.driver: Optional[ChatGPTDriver] = None

@@ -1,5 +1,5 @@
 [project]
-name = "ghostgpt"
+name = "customgpts"
 version = "0.1.0"
 description = "A stealth ChatGPT web scraper using patchright + persistent Chromium profiles."
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ghostgpt = "ghostgpt.cli:app"
+customgpts = "customgpts.cli:app"
 
 [build-system]
 requires = ["setuptools>=61.0"]

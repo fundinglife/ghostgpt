@@ -38,7 +38,7 @@ class ChatGPTDriver:
             logger.info(f"Cloudflare challenge detected, waiting... ({i+1}s)")
             await asyncio.sleep(1)
         raise Exception(
-            "Stuck on Cloudflare challenge. Try 'ghostgpt ask --no-headless' or run 'ghostgpt login' first."
+            "Stuck on Cloudflare challenge. Try 'customgpts ask --no-headless' or run 'customgpts login' first."
         )
 
     async def _ensure_page(self, gpt_id: Optional[str] = None):
@@ -79,7 +79,7 @@ class ChatGPTDriver:
                 try:
                     if await self.page.is_visible(indicator, timeout=1000):
                         raise Exception(
-                            "User appears to be logged out. Run 'ghostgpt login' first."
+                            "User appears to be logged out. Run 'customgpts login' first."
                         )
                 except Exception as e:
                     if "logged out" in str(e):
@@ -434,7 +434,7 @@ class ChatGPTDriver:
                 ext = "gif"
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"ghostgpt_{timestamp}_{self._msg_count}_{index}.{ext}"
+            filename = f"customgpts_{timestamp}_{self._msg_count}_{index}.{ext}"
             filepath = save_dir / filename
             filepath.write_bytes(base64.b64decode(data))
 

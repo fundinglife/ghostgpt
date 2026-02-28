@@ -1,4 +1,4 @@
-"""OpenAI-compatible API server for GhostGPT."""
+"""OpenAI-compatible API server for CustomGPTs."""
 import asyncio
 import time
 from uuid import uuid4

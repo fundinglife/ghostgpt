@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-CONFIG_PATH = Path.home() / ".ghostgpt" / "config.json"
+CONFIG_PATH = Path.home() / ".customgpts" / "config.json"
 
 DEFAULT_CONFIG = {
     "default_gpt": None,
@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
 
 
 def load_config() -> dict:
-    """Load config from ~/.ghostgpt/config.json, returning defaults if missing."""
+    """Load config from ~/.customgpts/config.json, returning defaults if missing."""
     if not CONFIG_PATH.exists():
         return dict(DEFAULT_CONFIG)
     try:
@@ -21,7 +21,7 @@ def load_config() -> dict:
 
 
 def save_config(config: dict) -> None:
-    """Write config to ~/.ghostgpt/config.json."""
+    """Write config to ~/.customgpts/config.json."""
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
         json.dumps(config, indent=2, ensure_ascii=False) + "\n",

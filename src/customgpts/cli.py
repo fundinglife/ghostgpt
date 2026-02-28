@@ -1,7 +1,7 @@
 import typer
 import asyncio
 from typing import Optional
-from .client import GhostGPT
+from .client import CustomGPTs
 from .browser import BrowserManager, DEFAULT_PROFILE_DIR
 from .config import load_config, save_config, resolve_gpt
 from loguru import logger
@@ -14,7 +14,7 @@ logger.remove()
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-app = typer.Typer(help="GhostGPT: A stealth ChatGPT web scraper.")
+app = typer.Typer(help="CustomGPTs: A stealth ChatGPT web scraper.")
 
 @app.command()
 def login(
@@ -22,7 +22,7 @@ def login(
 ):
     """
     Opens ChatGPT in a visible browser window so you can log in manually.
-    The profile is saved to ~/.ghostgpt/profile/ by default.
+    The profile is saved to ~/.customgpts/profile/ by default.
     """
     async def _login():
         profile_path = profile if profile else DEFAULT_PROFILE_DIR
@@ -44,7 +44,7 @@ def login(
             pass
         finally:
             await manager.stop()
-            print("Session saved. You can now use 'ghostgpt ask'.")
+            print("Session saved. You can now use 'customgpts ask'.")
 
     asyncio.run(_login())
 
@@ -66,14 +66,14 @@ def ask(
     # Resolve nickname/default
     gpt_id = resolve_gpt(gpt)
     if gpt and not gpt_id:
-        print(f"Unknown GPT nickname: '{gpt}'. Use 'ghostgpt gpts' to see available GPTs.")
+        print(f"Unknown GPT nickname: '{gpt}'. Use 'customgpts gpts' to see available GPTs.")
         raise typer.Exit(1)
 
     if gpt_id and verbose:
         logger.info(f"Resolved GPT: {gpt} -> {gpt_id}")
 
     async def _ask():
-        async with GhostGPT(visible=visible) as client:
+        async with CustomGPTs(visible=visible) as client:
             answer = await client.ask(prompt, gpt_id=gpt_id)
             print("\n" + "="*40)
             print(answer)
@@ -97,13 +97,13 @@ def chat(
 
     gpt_id = resolve_gpt(gpt)
     if gpt and not gpt_id:
-        print(f"Unknown GPT nickname: '{gpt}'. Use 'ghostgpt gpts' to see available GPTs.")
+        print(f"Unknown GPT nickname: '{gpt}'. Use 'customgpts gpts' to see available GPTs.")
         raise typer.Exit(1)
 
     label = gpt or "ChatGPT"
 
     async def _chat():
-        async with GhostGPT(visible=visible) as client:
+        async with CustomGPTs(visible=visible) as client:
             print(f"\n  Session started with {label}. Type 'exit' to end.\n")
             first = True
             while True:
@@ -142,7 +142,7 @@ def gpts(
         logger.add(sys.stderr, level="INFO")
 
     async def _gpts():
-        async with GhostGPT(visible=visible) as client:
+        async with CustomGPTs(visible=visible) as client:
             gpt_list = await client.list_gpts()
 
         config = load_config()
@@ -189,7 +189,7 @@ def search(
         logger.add(sys.stderr, level="INFO")
 
     async def _search():
-        async with GhostGPT(visible=visible) as client:
+        async with CustomGPTs(visible=visible) as client:
             results = await client.search_gpts(query, limit=limit)
 
         if not results:
@@ -206,7 +206,7 @@ def search(
             print(f"       by {g.get('author', '?')}")
             print()
 
-        print(f"  Star a result: ghostgpt star <ID> <nickname>")
+        print(f"  Star a result: customgpts star <ID> <nickname>")
         print()
 
     asyncio.run(_search())
@@ -225,7 +225,7 @@ def star(
 
     # If target is a number, tell user to use the ID
     if target.isdigit():
-        print(f"Use the GPT ID instead of number. Run 'ghostgpt gpts' to see IDs.")
+        print(f"Use the GPT ID instead of number. Run 'customgpts gpts' to see IDs.")
         raise typer.Exit(1)
 
     gpts[nickname] = target
@@ -275,7 +275,7 @@ def set_default(
 
     gpts = config.get("gpts", {})
     if nickname not in gpts:
-        print(f"Nickname '{nickname}' not found. Save it first with 'ghostgpt star <id> {nickname}'.")
+        print(f"Nickname '{nickname}' not found. Save it first with 'customgpts star <id> {nickname}'.")
         raise typer.Exit(1)
 
     config["default_gpt"] = nickname
@@ -301,7 +301,7 @@ def serve(
     import uvicorn
 
     configure(visible=visible)
-    print(f"\n  GhostGPT API server starting on http://{host}:{port}")
+    print(f"\n  CustomGPTs API server starting on http://{host}:{port}")
     print(f"  OpenAI endpoint: http://{host}:{port}/v1/chat/completions")
     print(f"  Health check:    http://{host}:{port}/health\n")
     uvicorn.run(server_app, host=host, port=port, log_level="info" if verbose else "warning")

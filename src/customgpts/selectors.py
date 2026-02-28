@@ -100,4 +100,4 @@ IMAGE_SELECTORS = [
 ]
 
 # Default directory for downloaded images
-IMAGE_DOWNLOAD_DIR = "~/.ghostgpt/images"
+IMAGE_DOWNLOAD_DIR = "~/.customgpts/images"
