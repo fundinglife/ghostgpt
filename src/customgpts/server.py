@@ -1,4 +1,32 @@
-"""OpenAI-compatible API server for CustomGPTs."""
+"""
+OpenAI-compatible API server for CustomGPTs.
+
+Provides a Starlette-based HTTP server that exposes ChatGPT via an API compatible
+with the OpenAI client library format. This allows any application that uses the
+OpenAI SDK to seamlessly use ChatGPT through this server.
+
+Endpoints:
+    GET  /health                  — Health check (returns {"status": "ok"})
+    GET  /v1/models               — List available models (GPT nicknames from config)
+    POST /v1/chat/completions     — Chat completion (supports streaming and non-streaming)
+
+Architecture:
+    - The browser is launched ONCE at server startup (via Starlette on_startup event).
+    - All requests share the same browser context but get their own page/tab.
+    - A semaphore (asyncio.Semaphore(1)) serializes requests because ChatGPT only
+      generates one response at a time per account.
+    - Conversations are tracked by conversation_id. Tabs with a conversation_id stay
+      open for follow-up messages; others are stored for potential reuse.
+    - Idle conversations are cleaned up after 30 minutes.
+
+Usage:
+    from customgpts.server import app, configure
+    import uvicorn
+
+    configure(visible=False)
+    uvicorn.run(app, host="0.0.0.0", port=5124)
+"""
+
 import asyncio
 import time
 from uuid import uuid4
@@ -26,35 +54,54 @@ from .schemas import (
     ModelListResponse,
 )
 
-# ── Server state (set by configure()) before uvicorn starts ──────────
+# ── Server state (set by configure() before uvicorn starts) ──────────
 
-_browser_manager: Optional[BrowserManager] = None
-_context = None  # BrowserContext — launched once at startup
-_visible = False  # Whether browser window is visible
-_request_sem = asyncio.Semaphore(1)  # ChatGPT only generates one response at a time
+_browser_manager: Optional[BrowserManager] = None  # Browser lifecycle manager
+_context = None  # BrowserContext — launched once at startup, shared by all requests
+_visible = False  # Whether the browser window is visible to the user
+_request_sem = asyncio.Semaphore(1)  # Serializes requests — ChatGPT only generates one response at a time
 
-# conversation_id -> (ChatGPTDriver, last_used_timestamp)
+# Active conversations: conversation_id -> (ChatGPTDriver, last_used_timestamp)
+# Each conversation has its own browser tab managed by a separate ChatGPTDriver instance.
 _conversations: dict[str, tuple[ChatGPTDriver, float]] = {}
 
-IDLE_TIMEOUT = 1800  # 30 min — close idle conversation tabs
+# Close conversation tabs that have been idle for more than 30 minutes
+IDLE_TIMEOUT = 1800
 
 
 def configure(visible: bool = False):
-    """Set up the browser manager (called before server starts)."""
+    """Initialize the server's browser manager before starting uvicorn.
+
+    Must be called before the server starts. Sets up the BrowserManager with the
+    desired visibility setting. The browser itself is launched later during the
+    Starlette on_startup event.
+
+    Args:
+        visible: Whether to show the browser window. Defaults to False (hidden).
+    """
     global _browser_manager, _visible
     _visible = visible
     _browser_manager = BrowserManager(headless=False, visible=visible)
 
 
 async def _startup():
-    """Launch the browser once at server startup."""
+    """Starlette on_startup event handler: launch the browser.
+
+    Called once when the server starts. Launches Chromium with the persistent
+    profile and stores the BrowserContext for use by all request handlers.
+    """
     global _context
     _context = await _browser_manager.start()
     logger.info("Browser launched and ready")
 
 
 async def _cleanup_idle():
-    """Close conversation tabs idle for more than IDLE_TIMEOUT."""
+    """Close conversation tabs that have been idle longer than IDLE_TIMEOUT.
+
+    Called at the start of each chat completion request. Iterates through all
+    tracked conversations and closes any whose last activity was more than
+    30 minutes ago, freeing browser resources.
+    """
     now = time.time()
     to_remove = []
     for conv_id, (driver, last_used) in _conversations.items():
@@ -71,7 +118,25 @@ async def _cleanup_idle():
 
 
 def _flatten_messages(messages: list[ChatMessage]) -> str:
-    """Extract the prompt from an OpenAI messages array."""
+    """Extract a single prompt string from an OpenAI-format messages array.
+
+    Combines system messages and extracts the last user message. ChatGPT receives
+    a single prompt (not a structured messages array), so this function flattens
+    the OpenAI format into a single string.
+
+    Strategy:
+      - Collect all system message contents.
+      - Take the last user message content.
+      - If both exist, join them with double newlines.
+      - If only one exists, use that.
+      - As a final fallback, use the last message regardless of role.
+
+    Args:
+        messages: A list of ChatMessage objects with role and content fields.
+
+    Returns:
+        str: The flattened prompt string to send to ChatGPT.
+    """
     system_parts = []
     last_user = ""
     for msg in messages:
@@ -88,10 +153,29 @@ def _flatten_messages(messages: list[ChatMessage]) -> str:
 # ── Endpoints ────────────────────────────────────────────────────────
 
 async def health(request: Request) -> JSONResponse:
+    """Health check endpoint.
+
+    Args:
+        request: The incoming HTTP request (unused).
+
+    Returns:
+        JSONResponse: {"status": "ok"} with 200 status.
+    """
     return JSONResponse({"status": "ok"})
 
 
 async def list_models(request: Request) -> JSONResponse:
+    """List available models (GPT nicknames from config).
+
+    Always includes "chatgpt" as the base model. Additionally lists any GPT
+    nicknames saved via 'customgpts star' as separate model entries.
+
+    Args:
+        request: The incoming HTTP request (unused).
+
+    Returns:
+        JSONResponse: An OpenAI-compatible model list response with model objects.
+    """
     config = load_config()
     models = [ModelObject(id="chatgpt")]
 
@@ -105,15 +189,36 @@ async def list_models(request: Request) -> JSONResponse:
 
 
 async def chat_completions(request: Request) -> JSONResponse:
+    """Handle a chat completion request (OpenAI-compatible).
+
+    Accepts the standard OpenAI chat completion format with an additional optional
+    'conversation_id' field for multi-turn conversation support.
+
+    Flow:
+      1. Clean up idle conversations.
+      2. Parse and validate the request body.
+      3. Resolve the model name to a GPT ID (if using a custom GPT).
+      4. Flatten the messages array into a single prompt string.
+      5. Find or create a ChatGPTDriver for the conversation.
+      6. Acquire the request semaphore (serializes all requests).
+      7. Delegate to streaming or non-streaming handler.
+
+    Args:
+        request: The incoming HTTP POST request with JSON body.
+
+    Returns:
+        JSONResponse: An OpenAI-compatible chat completion response, or an
+                      EventSourceResponse for streaming requests.
+    """
     await _cleanup_idle()
 
     body = await request.json()
     req = ChatCompletionRequest(**body)
 
-    # Resolve model name to GPT ID
+    # Resolve model name to GPT ID (e.g., "teacher" -> "g-XXXXX")
     gpt_id = resolve_gpt(req.model if req.model != "chatgpt" else None)
 
-    # Flatten messages to prompt
+    # Flatten messages to a single prompt string for ChatGPT
     prompt = _flatten_messages(req.messages)
     if not prompt:
         return _error_response("No user message found in messages array", 400)
@@ -127,24 +232,25 @@ async def chat_completions(request: Request) -> JSONResponse:
     driver = None
 
     if conv_id and conv_id in _conversations:
+        # Reuse existing conversation tab
         driver, _ = _conversations[conv_id]
         _conversations[conv_id] = (driver, time.time())
         continue_conv = True
         logger.info(f"Reusing conversation: {conv_id}")
     else:
-        # New tab for this request
+        # Create a new tab for this request
         driver = ChatGPTDriver(_context, visible=_visible)
         if conv_id:
-            # Client wants a new conversation with this ID
+            # Client wants a new conversation with this specific ID
             _conversations[conv_id] = (driver, time.time())
             logger.info(f"New conversation: {conv_id}")
         else:
-            # Generate an ID — client can use it for follow-ups
+            # Auto-generate an ID — client can use it for follow-ups
             conv_id = f"conv-{uuid4().hex[:12]}"
 
     try:
         # ChatGPT only generates one response at a time per account,
-        # so we serialize requests with a semaphore
+        # so we serialize all requests with a semaphore
         async with _request_sem:
             logger.info(f"Processing request: {prompt[:50]}...")
             if req.stream:
@@ -168,12 +274,33 @@ async def _handle_non_streaming(
     driver, prompt, gpt_id, continue_conv,
     completion_id, created, model, conv_id, close_tab,
 ) -> JSONResponse:
+    """Handle a non-streaming chat completion request.
+
+    Sends the prompt, waits for the full response, then returns it as a single
+    JSON response in OpenAI format.
+
+    Args:
+        driver: The ChatGPTDriver instance for this conversation.
+        prompt: The flattened prompt string.
+        gpt_id: The resolved GPT ID, or None for default ChatGPT.
+        continue_conv: Whether this is a follow-up in an existing conversation.
+        completion_id: Unique ID for this completion (e.g., "chatcmpl-abc123").
+        created: Unix timestamp of when the request was received.
+        model: The model name from the original request.
+        conv_id: The conversation ID for tracking.
+        close_tab: Whether to close the tab after the response (False if client
+                   provided a conversation_id for reuse).
+
+    Returns:
+        JSONResponse: An OpenAI-compatible chat completion response with the
+                      x-conversation-id header set.
+    """
     answer = await driver.send_prompt(
         prompt, gpt_id=gpt_id, continue_conversation=continue_conv
     )
 
     if close_tab and driver.page:
-        # Keep the tab open so we can store it for potential reuse
+        # Store the tab for potential reuse even if client didn't request it
         _conversations[conv_id] = (driver, time.time())
 
     resp = ChatCompletionResponse(
@@ -197,8 +324,34 @@ async def _handle_streaming(
     driver, prompt, gpt_id, continue_conv,
     completion_id, created, model, conv_id, close_tab,
 ):
+    """Handle a streaming chat completion request via Server-Sent Events (SSE).
+
+    Sends the prompt and streams the response as SSE events in OpenAI chunk format.
+    Each chunk contains a delta with new text content.
+
+    SSE event sequence:
+      1. First chunk: role="assistant" (identifies the speaker)
+      2. Content chunks: delta text as it generates
+      3. Final chunk: finish_reason="stop"
+      4. [DONE] sentinel
+
+    Args:
+        driver: The ChatGPTDriver instance for this conversation.
+        prompt: The flattened prompt string.
+        gpt_id: The resolved GPT ID, or None for default ChatGPT.
+        continue_conv: Whether this is a follow-up in an existing conversation.
+        completion_id: Unique ID for this completion.
+        created: Unix timestamp of when the request was received.
+        model: The model name from the original request.
+        conv_id: The conversation ID for tracking.
+        close_tab: Whether to close the tab after the response.
+
+    Returns:
+        EventSourceResponse: An SSE response that streams chat completion chunks.
+    """
     async def event_generator():
-        # First chunk: role
+        """Async generator that yields SSE events for the streaming response."""
+        # First chunk: role announcement
         first = ChatCompletionChunk(
             id=completion_id,
             created=created,
@@ -208,7 +361,7 @@ async def _handle_streaming(
         )
         yield {"data": first.model_dump_json()}
 
-        # Stream content deltas
+        # Stream content deltas from the DOM polling
         try:
             async for delta_text in driver.send_prompt_streaming(
                 prompt, gpt_id=gpt_id, continue_conversation=continue_conv
@@ -223,7 +376,7 @@ async def _handle_streaming(
         except Exception as e:
             logger.error(f"Stream error: {e}")
 
-        # Final chunk with finish_reason
+        # Final chunk with finish_reason="stop"
         final = ChatCompletionChunk(
             id=completion_id,
             created=created,
@@ -233,7 +386,7 @@ async def _handle_streaming(
         yield {"data": final.model_dump_json()}
         yield {"data": "[DONE]"}
 
-        # Store conversation for reuse
+        # Store conversation for potential reuse
         if close_tab:
             _conversations[conv_id] = (driver, time.time())
 
@@ -244,6 +397,16 @@ async def _handle_streaming(
 
 
 def _error_response(message: str, status_code: int = 500) -> JSONResponse:
+    """Create an OpenAI-compatible error response.
+
+    Args:
+        message: Human-readable error description.
+        status_code: HTTP status code. Defaults to 500.
+
+    Returns:
+        JSONResponse: An error response in OpenAI format with the error object
+                      containing message, type, and code fields.
+    """
     return JSONResponse(
         {
             "error": {

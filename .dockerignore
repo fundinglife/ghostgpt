@@ -1,0 +1,15 @@
+.venv/
+.git/
+.claude/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.customgpts/
+.env
+debug_screenshot.png
+debug_visible.png
+output.txt
+.vscode/
+.idea/

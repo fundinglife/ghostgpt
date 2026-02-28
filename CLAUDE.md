@@ -34,7 +34,7 @@ Modules in `src/customgpts/` using a src-layout:
 
 - **cli.py** — Typer CLI app with all commands. Wraps async calls with `asyncio.run()`.
 - **client.py** — `CustomGPTs` class, the public API. Async context manager composing `BrowserManager` + `ChatGPTDriver`.
-- **browser.py** — `BrowserManager` wraps patchright to launch persistent Chromium contexts. Default profile: `~/.customgpts/profile/`. Win32 API hides browser window and removes from taskbar.
+- **browser.py** — `BrowserManager` wraps patchright to launch persistent Chromium contexts. Default profile: `~/.customgpts/profile/`. Win32 API hides browser window on Windows; Xvfb provides virtual display in Docker.
 - **driver.py** — `ChatGPTDriver` handles all ChatGPT DOM interaction: navigation, prompt input, send, response extraction, streaming. Largest module.
 - **selectors.py** — Centralized CSS selectors with fallback arrays. When ChatGPT UI changes break the scraper, update selectors here first.
 - **config.py** — GPT nickname management. Config at `~/.customgpts/config.json`.
@@ -51,15 +51,25 @@ Modules in `src/customgpts/` using a src-layout:
 - **Browser at startup**: Browser launches once via Starlette `on_startup` event, not lazily per-request.
 - **Input method switching**: `keyboard.type()` when browser is visible; clipboard paste (`navigator.clipboard.writeText` + Ctrl+V) when hidden. Clipboard paste is more reliable for hidden browsers.
 - **One tab per request**: API server opens a new tab for each request. Tabs with `conversation_id` stay open for follow-ups; others close after response.
-- **Win32 window hiding**: `ShowWindow(SW_HIDE)` + `WS_EX_TOOLWINDOW` to hide browser from user, taskbar, and Alt+Tab. PID-based watcher ensures only patchright windows are hidden, not user's Chrome.
+- **Window hiding**: On Windows, `ShowWindow(SW_HIDE)` + `WS_EX_TOOLWINDOW` hides browser from taskbar/Alt+Tab. PID-based watcher ensures only patchright windows are hidden. On Linux/Docker, Xvfb provides a virtual display instead.
 - **Persistent profiles**: Browser sessions persist via patchright's `user_data_dir`.
 
 ## Deployment
 
-- API server: `customgpts serve` on port 5124
-- Auto-start: `start_hidden.vbs` in Windows Startup folder
-- External access: cloudflared tunnel at `customgpts.rohitsoni.com`
-- Tunnel config: `C:\_projects_\cliproxy\cloudflared-config.yml`
+- **Docker (primary)**: `docker compose up -d` runs API server, Xvfb, noVNC, and cloudflared in a single container
+- **Ports**: 5124 (API), 6080 (noVNC for login/debug)
+- **VNC login**: Open `http://localhost:6080` to log in to ChatGPT via browser
+- **Tunnel**: cloudflared inside container, config at `docker/cloudflared.yml`, creds mounted from `../capi_multi/`
+- **External access**: `customgpts.rohitsoni.com`
+- **Data persistence**: Bind mount `./.customgpts` -> `/root/.customgpts` (profile, config, images). Survives `docker compose down -v`.
+
+### Docker files
+
+- `Dockerfile` — Multi-stage build: Python 3.12-slim + Chromium deps + Xvfb + noVNC + cloudflared
+- `docker-compose.yml` — Single service, 2g shm_size, named volume, port mappings
+- `docker/entrypoint.sh` — Directory setup, optional VNC password, launches supervisord
+- `docker/supervisord.conf` — Process manager: Xvfb → x11vnc → noVNC → customgpts serve → cloudflared
+- `docker/cloudflared.yml` — Tunnel config for `customgpts.rohitsoni.com`
 
 ## Dependencies
 

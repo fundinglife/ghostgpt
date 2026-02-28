@@ -1,0 +1,25 @@
+# Cloudflared Tunnel Configuration for CustomGPTs
+#
+# Routes external HTTPS traffic from customgpts.rohitsoni.com to the
+# CustomGPTs API server running on localhost:5124 inside the container.
+#
+# This tunnel shares the same tunnel ID and credentials file as the
+# capi_multi project. The credentials file is mounted read-only from
+# ../capi_multi/ via docker-compose.yml.
+#
+# To add this hostname to the tunnel, configure it in the Cloudflare
+# Zero Trust dashboard under the tunnel's public hostname settings.
+
+tunnel: 05c752d5-63f9-4507-be80-52a534da2157
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  # Route customgpts.rohitsoni.com to the API server
+  - hostname: customgpts.rohitsoni.com
+    service: http://localhost:5124
+  # Route vnc.rohitsoni.com to the noVNC web interface for remote browser login.
+  # Protected by VNC_PASSWORD env var — set it in .env or docker-compose.yml.
+  - hostname: vnc.rohitsoni.com
+    service: http://localhost:6080
+  # Catch-all: return 404 for any unmatched hostname
+  - service: http_status:404

@@ -1,3 +1,29 @@
+"""
+Typer CLI application for CustomGPTs.
+
+Provides all command-line commands for interacting with ChatGPT via the browser
+scraper. Each command is a thin wrapper around the async Python API (client.py),
+bridged to synchronous execution via asyncio.run().
+
+Commands:
+    login    — Open a visible browser for manual ChatGPT login
+    ask      — Send a single prompt and print the response
+    chat     — Start an interactive multi-turn chat session
+    serve    — Start the OpenAI-compatible API server
+    gpts     — List available GPTs from the user's account
+    search   — Search the GPT Store for public GPTs
+    star     — Save a GPT with a nickname for quick access
+    unstar   — Remove a saved GPT nickname
+    default  — Set or clear the default GPT
+
+Usage:
+    customgpts login
+    customgpts ask "What is the capital of France?"
+    customgpts ask "Explain gravity" --gpt teacher
+    customgpts chat --visible
+    customgpts serve --port 5124 --verbose
+"""
+
 import typer
 import asyncio
 from typing import Optional
@@ -7,22 +33,30 @@ from .config import load_config, save_config, resolve_gpt
 from loguru import logger
 import sys
 
-# Disable logger by default for CLI unless requested
+# Disable loguru output by default for clean CLI output.
+# Re-enabled per-command with --verbose flag.
 logger.remove()
 
-# Fix Windows console encoding for emoji/unicode
+# Fix Windows console encoding for emoji/unicode characters in ChatGPT responses
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 app = typer.Typer(help="CustomGPTs: A stealth ChatGPT web scraper.")
 
+
 @app.command()
 def login(
     profile: Optional[str] = typer.Option(None, "--profile", help="Path to a custom profile directory")
 ):
-    """
-    Opens ChatGPT in a visible browser window so you can log in manually.
-    The profile is saved to ~/.customgpts/profile/ by default.
+    """Open ChatGPT in a visible browser window for manual login.
+
+    Launches Chromium with the persistent profile directory and navigates to ChatGPT.
+    The user logs in manually in the browser window. When they close the window,
+    the session is saved to disk and reused by all subsequent commands.
+
+    Args:
+        profile: Optional custom path for the browser profile directory.
+                 Defaults to ~/.customgpts/profile/.
     """
     async def _login():
         profile_path = profile if profile else DEFAULT_PROFILE_DIR
@@ -36,6 +70,7 @@ def login(
         print("Once you are logged in and see the chat interface, close the browser window to save the session.\n")
 
         try:
+            # Wait until the user closes all browser pages
             while True:
                 if not context.pages:
                     break
@@ -56,14 +91,20 @@ def ask(
     visible: bool = typer.Option(False, "--visible", help="Show the browser window"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug logs")
 ):
-    """
-    Sends a prompt to ChatGPT and prints the response.
-    Uses the default GPT if --gpt is not specified and a default is set.
+    """Send a prompt to ChatGPT and print the response.
+
+    Uses the default GPT if --gpt is not specified and a default is set in config.
+
+    Args:
+        prompt: The message to send to ChatGPT.
+        gpt: Optional GPT nickname or raw ID. If a nickname, it's resolved via config.
+        visible: If True, show the browser window during interaction.
+        verbose: If True, enable debug logging to stderr.
     """
     if verbose:
         logger.add(sys.stderr, level="INFO")
 
-    # Resolve nickname/default
+    # Resolve nickname to GPT ID, or use default
     gpt_id = resolve_gpt(gpt)
     if gpt and not gpt_id:
         print(f"Unknown GPT nickname: '{gpt}'. Use 'customgpts gpts' to see available GPTs.")
@@ -88,9 +129,15 @@ def chat(
     visible: bool = typer.Option(False, "--visible", help="Show the browser window"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug logs")
 ):
-    """
-    Start an interactive chat session. Messages stay in the same conversation.
+    """Start an interactive multi-turn chat session.
+
+    Messages stay in the same conversation thread (continue_conversation=True).
     Type 'exit' or 'quit' to end the session.
+
+    Args:
+        gpt: Optional GPT nickname or raw ID to use for the session.
+        visible: If True, show the browser window during the session.
+        verbose: If True, enable debug logging to stderr.
     """
     if verbose:
         logger.add(sys.stderr, level="INFO")
@@ -135,8 +182,14 @@ def gpts(
     visible: bool = typer.Option(False, "--visible", help="Show the browser window"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug logs")
 ):
-    """
-    List all available GPTs from your ChatGPT account.
+    """List all available GPTs from the user's ChatGPT account.
+
+    Fetches pinned and custom GPTs via ChatGPT's backend API, then displays them
+    alongside any saved nicknames and the current default GPT from config.
+
+    Args:
+        visible: If True, show the browser window during the fetch.
+        verbose: If True, enable debug logging to stderr.
     """
     if verbose:
         logger.add(sys.stderr, level="INFO")
@@ -149,7 +202,7 @@ def gpts(
         saved = config.get("gpts", {})
         default = config.get("default_gpt")
 
-        # Reverse map: id -> nickname
+        # Reverse map: GPT ID -> saved nickname
         id_to_nick = {v: k for k, v in saved.items()}
 
         print("\n  Available GPTs:\n")
@@ -182,8 +235,16 @@ def search(
     visible: bool = typer.Option(False, "--visible", help="Show the browser window"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug logs")
 ):
-    """
-    Search the GPT Store for any public custom GPT.
+    """Search the GPT Store for public custom GPTs by keyword.
+
+    Displays results with GPT name, ID, description, and author. Use 'customgpts star'
+    to save a result by its ID with a nickname.
+
+    Args:
+        query: The search keyword to find GPTs.
+        limit: Maximum number of results to return. Defaults to 20.
+        visible: If True, show the browser window during the search.
+        verbose: If True, enable debug logging to stderr.
     """
     if verbose:
         logger.add(sys.stderr, level="INFO")
@@ -217,13 +278,19 @@ def star(
     target: str = typer.Argument(help="GPT ID (e.g. g-XXXXX) to save"),
     nickname: str = typer.Argument(help="Short nickname for this GPT"),
 ):
-    """
-    Save a GPT with a nickname for quick access.
+    """Save a GPT with a nickname for quick access.
+
+    Maps a short nickname to a GPT ID in the config file. The nickname can then
+    be used with --gpt in other commands or as a model name in the API server.
+
+    Args:
+        target: The GPT ID to save (e.g., "g-abc123").
+        nickname: A short, memorable name for this GPT (e.g., "teacher").
     """
     config = load_config()
     gpts = config.get("gpts", {})
 
-    # If target is a number, tell user to use the ID
+    # Prevent common mistake of using a search result number instead of ID
     if target.isdigit():
         print(f"Use the GPT ID instead of number. Run 'customgpts gpts' to see IDs.")
         raise typer.Exit(1)
@@ -238,8 +305,12 @@ def star(
 def unstar(
     nickname: str = typer.Argument(help="Nickname to remove"),
 ):
-    """
-    Remove a saved GPT nickname.
+    """Remove a saved GPT nickname from the config.
+
+    Also clears the default GPT if the removed nickname was the current default.
+
+    Args:
+        nickname: The nickname to remove (e.g., "teacher").
     """
     config = load_config()
     gpts = config.get("gpts", {})
@@ -262,8 +333,13 @@ def unstar(
 def set_default(
     nickname: str = typer.Argument(help="Nickname to use as default (or 'none' to clear)"),
 ):
-    """
-    Set the default GPT used when --gpt is not specified.
+    """Set the default GPT used when --gpt is not specified.
+
+    The default GPT is used automatically by 'ask', 'chat', and the API server
+    when no explicit GPT is requested. Pass 'none' to clear the default.
+
+    Args:
+        nickname: The saved nickname to set as default, or "none" to clear.
     """
     config = load_config()
 
@@ -290,9 +366,22 @@ def serve(
     visible: bool = typer.Option(False, "--visible", help="Show the browser window"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug logs"),
 ):
-    """
-    Start an OpenAI-compatible API server.
-    Use with any OpenAI client library or curl.
+    """Start an OpenAI-compatible API server.
+
+    Launches Chromium and starts a Starlette/uvicorn server that exposes ChatGPT
+    via the standard OpenAI chat completions API format. Compatible with the
+    OpenAI Python client library and any tool that speaks the OpenAI API.
+
+    Endpoints:
+        POST /v1/chat/completions  — Chat completion (streaming + non-streaming)
+        GET  /v1/models            — List available models
+        GET  /health               — Health check
+
+    Args:
+        port: The port to listen on. Defaults to 5124.
+        host: The host to bind to. Defaults to "0.0.0.0" (all interfaces).
+        visible: If True, show the browser window.
+        verbose: If True, enable debug logging.
     """
     if verbose:
         logger.add(sys.stderr, level="INFO")

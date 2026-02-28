@@ -6,23 +6,64 @@ A stealth ChatGPT web scraper that doubles as an **OpenAI-compatible API server*
 
 - **Stealth browser** — patchright with `--disable-blink-features=AutomationControlled`
 - **Persistent session** — log in once, reuse the profile forever
-- **Hidden browser** — Win32 `ShowWindow(SW_HIDE)` hides from taskbar and Alt+Tab
+- **Hidden browser** — Win32 window hiding or Xvfb virtual display in Docker
 - **OpenAI-compatible API** — `POST /v1/chat/completions` with streaming SSE
 - **Conversation continuity** — reuse tabs via `conversation_id`
 - **Custom GPT support** — star GPTs with nicknames, set defaults
 - **GPT Store search** — find and use any public GPT
 - **Image extraction** — downloads DALL-E images from responses
 
-## Install
+## Docker Deployment (Recommended)
+
+Run as a Docker container with VNC for login and cloudflared tunnel for external access.
+
+### Setup
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+### Login (one time)
+
+1. Open `http://localhost:6080` in your browser (noVNC)
+2. You'll see Chromium on the virtual desktop — log in to ChatGPT
+3. Close the VNC tab. The session persists in a Docker volume.
+
+### Test
+
+```bash
+curl http://localhost:5124/health
+curl http://localhost:5124/v1/models
+```
+
+### Configuration
+
+Environment variables in `docker-compose.yml`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VNC_PASSWORD` | (none) | Optional password for VNC access |
+| `DISPLAY_WIDTH` | 1280 | Virtual display width |
+| `DISPLAY_HEIGHT` | 720 | Virtual display height |
+
+The cloudflared tunnel config is at `docker/cloudflared.yml`. Tunnel credentials are mounted from the `capi_multi` project.
+
+### Ports
+
+| Port | Service |
+|------|---------|
+| 5124 | API server |
+| 6080 | noVNC web interface |
+
+## Local Install (Alternative)
 
 ```bash
 pip install .
 patchright install chromium
 ```
 
-## Quick Start
-
-### 1. Login (one time)
+### Login (one time)
 
 ```bash
 customgpts login
@@ -198,13 +239,12 @@ customgpts default <nickname>       # Set default GPT
 
 ## How It Works
 
-1. **BrowserManager** launches Chromium once at server startup with a persistent profile at `~/.customgpts/profile/`
-2. **Win32 API** hides the browser window (`ShowWindow(SW_HIDE)` + `WS_EX_TOOLWINDOW`)
-3. **ChatGPTDriver** navigates to ChatGPT, inputs prompts (clipboard paste when hidden, keyboard when visible), clicks send
-4. **Request serialization** — ChatGPT only generates one response at a time, so requests are queued via `asyncio.Semaphore(1)`
-5. **DOM polling** detects response completion via Copy/Read aloud buttons on the last `<article>`, with a message count guard against transient DOM elements
-6. **Streaming** polls `inner_text()` every 0.3s and yields text deltas as SSE chunks
-7. **Selectors** are centralized in `selectors.py` with fallback arrays for resilience
+1. **BrowserManager** launches Chromium once at server startup with a persistent profile at `~/.customgpts/profile/`. On Windows, Win32 API hides the window. In Docker, Xvfb provides a virtual display.
+2. **ChatGPTDriver** navigates to ChatGPT, inputs prompts (clipboard paste when hidden, keyboard when visible), clicks send
+3. **Request serialization** — ChatGPT only generates one response at a time, so requests are queued via `asyncio.Semaphore(1)`
+4. **DOM polling** detects response completion via Copy/Read aloud buttons on the last `<article>`, with a message count guard against transient DOM elements
+5. **Streaming** polls `inner_text()` every 0.3s and yields text deltas as SSE chunks
+6. **Selectors** are centralized in `selectors.py` with fallback arrays for resilience
 
 ## License
 

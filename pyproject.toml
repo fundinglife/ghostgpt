@@ -1,3 +1,10 @@
+# CustomGPTs — Python package configuration
+#
+# Build & install:
+#   pip install .                    # Production install
+#   pip install -e .                 # Editable/dev install
+#   patchright install chromium      # Required: download browser binary
+
 [project]
 name = "customgpts"
 version = "0.1.0"
@@ -5,16 +12,24 @@ description = "A stealth ChatGPT web scraper using patchright + persistent Chrom
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "patchright>=1.49.0",
-    "typer[all]>=0.12.0",
-    "loguru>=0.7.2",
-    "httpx>=0.27.0",
-    "starlette>=0.37.0",
-    "uvicorn>=0.29.0",
-    "sse-starlette>=2.0.0",
-    "pydantic>=2.0.0",
+    "patchright>=1.49.0",      # Stealth Playwright fork (browser automation)
+    "typer[all]>=0.12.0",      # CLI framework with auto-completion
+    "loguru>=0.7.2",           # Structured logging
+    "httpx>=0.27.0",           # HTTP client (unused currently, kept for future use)
+    "starlette>=0.37.0",       # ASGI web framework for the API server
+    "uvicorn>=0.29.0",         # ASGI server to run Starlette
+    "sse-starlette>=2.0.0",    # Server-Sent Events for streaming responses
+    "pydantic>=2.0.0",         # Data validation for API request/response models
 ]
 
+# Optional test dependencies: pip install ".[test]"
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+]
+
+# CLI entrypoint: `customgpts` command maps to the Typer app in cli.py
 [project.scripts]
 customgpts = "customgpts.cli:app"
 
@@ -22,5 +37,13 @@ customgpts = "customgpts.cli:app"
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+# src-layout: package source is in src/customgpts/
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that hit actual ChatGPT (slow, requires login)",
+]

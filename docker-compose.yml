@@ -1,0 +1,49 @@
+# CustomGPTs Docker Compose Configuration
+#
+# Runs the CustomGPTs API server in a Docker container with VNC access for
+# browser login and a cloudflared tunnel for external HTTPS access.
+#
+# Quick start:
+#   docker compose build
+#   docker compose up -d
+#   Open http://localhost:6080 to log in via VNC (first time only)
+#   curl http://localhost:5124/health
+#
+# Data persistence:
+#   Browser profile and config are stored in ./.customgpts/ on the host
+#   via bind mount. This survives `docker compose down -v`.
+
+services:
+  customgpts:
+    build: .
+    container_name: customgpts
+    restart: unless-stopped
+
+    ports:
+      - "5124:5124"   # API server (OpenAI-compatible)
+      - "6080:6080"   # noVNC web interface (browser-based VNC for login/debug)
+
+    volumes:
+      # Bind mount for persistent browser profile, config, and images.
+      # Using bind mount instead of named volume so data survives `docker compose down -v`.
+      - ./.customgpts:/root/.customgpts
+
+      # Cloudflared tunnel config — routes customgpts.rohitsoni.com to localhost:5124
+      - ./docker/cloudflared.yml:/etc/cloudflared/config.yml:ro
+
+      # Cloudflared tunnel credentials — shared with the capi_multi project's tunnel.
+      # This file contains the tunnel authentication token.
+      - ../capi_multi/05c752d5-63f9-4507-be80-52a534da2157.json:/etc/cloudflared/creds.json:ro
+
+      # Cloudflared account cert — required by `cloudflared tunnel route dns` to
+      # auto-create CNAME records on container startup.
+      - ~/.cloudflared/cert.pem:/etc/cloudflared/cert.pem:ro
+
+    environment:
+      - VNC_PASSWORD=${VNC_PASSWORD:-}   # Optional: set in .env to password-protect VNC
+      - DISPLAY_WIDTH=1280               # Virtual display width (pixels)
+      - DISPLAY_HEIGHT=720               # Virtual display height (pixels)
+
+    # Chromium requires more shared memory than Docker's default 64MB.
+    # Without this, the browser will crash with out-of-memory errors.
+    shm_size: "2g"

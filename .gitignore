@@ -26,6 +26,7 @@ output.txt
 # Secrets / tokens
 token.json
 tests_http/token.json
+.env
 
-# Windows artifacts
+# OS artifacts
 nul
