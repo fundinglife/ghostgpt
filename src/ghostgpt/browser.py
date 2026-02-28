@@ -36,6 +36,13 @@ def _get_chrome_window_handles() -> set:
     return handles
 
 
+def _get_pid_from_hwnd(hwnd) -> int:
+    """Get the process ID that owns a window handle."""
+    pid = ctypes.wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
 def _hide_windows(handles: set) -> int:
     """Hide windows and remove from taskbar via Win32 API."""
     if sys.platform != "win32" or not handles:
@@ -61,6 +68,7 @@ class BrowserManager:
         self.visible = visible
         self._patchright = None
         self._browser_context: BrowserContext = None
+        self._watcher_task = None
 
         # Ensure profile directory exists
         self.profile_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +102,7 @@ class BrowserManager:
 
         # Win32: hide the browser window at OS level (browser doesn't know)
         if sys.platform == "win32" and not self.headless and not self.visible:
-            for _ in range(20):  # poll up to 2s for window to appear
+            for _ in range(100):  # poll up to 10s for window to appear
                 await asyncio.sleep(0.1)
                 new_windows = _get_chrome_window_handles() - pre_launch
                 if new_windows:
@@ -102,10 +110,33 @@ class BrowserManager:
                     logger.info(f"Hidden {count} browser window(s) via Win32 ShowWindow")
                     break
 
+            # Track patchright's PIDs so the watcher only hides OUR windows,
+            # not the user's regular Chrome
+            self._patchright_pids = {_get_pid_from_hwnd(h) for h in new_windows} if new_windows else set()
+            logger.info(f"Patchright browser PIDs: {self._patchright_pids}")
+            self._watcher_task = asyncio.create_task(self._window_watcher())
+
         return self._browser_context
+
+    async def _window_watcher(self):
+        """Background task that hides new patchright windows (not user's Chrome)."""
+        while True:
+            try:
+                await asyncio.sleep(1)
+                for hwnd in _get_chrome_window_handles():
+                    pid = _get_pid_from_hwnd(hwnd)
+                    if pid in self._patchright_pids:
+                        _hide_windows({hwnd})
+                        logger.info(f"Watcher: hidden patchright window (PID {pid})")
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                continue
 
     async def stop(self):
         """Stops the browser and patchright."""
+        if self._watcher_task:
+            self._watcher_task.cancel()
         if self._browser_context:
             await self._browser_context.close()
         if self._patchright:
